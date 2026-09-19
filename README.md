@@ -238,6 +238,10 @@ GET /api/health
 
 ---
 
+`CORS_ORIGINS` accepts a comma-separated list of browser origins. Every response also includes an `X-Request-Id` header for correlating API errors with application logs.
+
+---
+
 ## AWS Setup
 
 ### 1 — Create an S3 bucket

@@ -1,15 +1,25 @@
 const crypto = require('crypto');
-const path = require('path');
 const s3 = require('../services/s3.service');
 const db = require('../config/db');
+const { ALLOWED } = require('../middleware/upload');
 
 const S3_PREFIX = 'uploads/';
+const FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmtBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function s3KeyFor(fileId) {
+  if (!FILE_ID_PATTERN.test(fileId)) {
+    const error = new Error('Invalid fileId format');
+    error.status = 400;
+    throw error;
+  }
+  return `${S3_PREFIX}${fileId}`;
 }
 
 async function dbInsert(record) {
@@ -38,9 +48,9 @@ async function dbGet(fileId) {
 async function uploadFile(req, res) {
   if (!req.file) return res.status(400).json({ error: 'No file attached. Use field name "file".' });
 
-  const ext = path.extname(req.file.originalname).toLowerCase();
+  const ext = ALLOWED[req.file.mimetype];
   const fileId = `${crypto.randomUUID()}${ext}`;
-  const s3Key = `${S3_PREFIX}${fileId}`;
+  const s3Key = s3KeyFor(fileId);
 
   await s3.upload({
     buffer:       req.file.buffer,
@@ -80,7 +90,7 @@ async function uploadFile(req, res) {
 // ── GET /api/files/:fileId ────────────────────────────────────────────
 async function getFile(req, res) {
   const { fileId } = req.params;
-  const s3Key = `${S3_PREFIX}${fileId}`;
+  const s3Key = s3KeyFor(fileId);
 
   const [fileUrl, row] = await Promise.all([
     s3.presignGet(s3Key),
@@ -158,9 +168,12 @@ async function presignUpload(req, res) {
     return res.status(400).json({ error: 'filename and contentType are required' });
   }
 
-  const ext    = path.extname(filename).toLowerCase();
+  const ext = ALLOWED[contentType];
+  if (!ext) {
+    return res.status(415).json({ error: `File type "${contentType}" is not allowed` });
+  }
   const fileId = `${crypto.randomUUID()}${ext}`;
-  const s3Key  = `${S3_PREFIX}${fileId}`;
+  const s3Key  = s3KeyFor(fileId);
 
   const uploadUrl = await s3.presignPut(s3Key, contentType, 300);
 
@@ -176,7 +189,7 @@ async function presignUpload(req, res) {
 // ── DELETE /api/files/:fileId ─────────────────────────────────────────
 async function deleteFile(req, res) {
   const { fileId } = req.params;
-  const s3Key = `${S3_PREFIX}${fileId}`;
+  const s3Key = s3KeyFor(fileId);
 
   await s3.remove(s3Key);
 
